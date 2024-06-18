@@ -1,9 +1,12 @@
-from flask import Flask, render_template, request, redirect, url_for
+# app.py
+from flask import Flask, render_template, request, redirect, url_for, flash
 import secrets
 import string
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from flask_bcrypt import Bcrypt
+from forms import RegistrationForm, LoginForm
+from models import db, User, Password  # Import models and db from models.py
 from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
 import base64
@@ -14,24 +17,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///passwords_encrypted.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-DATABASE_URL = 'sqlite:///passwords_encrypted.db'
-SECRET_KEY = os.getenv('SECRET_KEY').encode()  # Load and encode the secret key
-SALT = base64.b64decode(os.getenv('SALT'))  # Load and decode the salt
+# Initialize SQLAlchemy with the Flask app
+db.init_app(app)
+bcrypt = Bcrypt(app)
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
 
-engine = create_engine(DATABASE_URL)
-Base = declarative_base()
-
-class Password(Base):
-    __tablename__ = 'passwords'
-    id = Column(Integer, primary_key=True)
-    website = Column(String, nullable=False)
-    username = Column(String, nullable=False)
-    password = Column(String, nullable=False)
-
-Base.metadata.create_all(engine)
-Session = sessionmaker(bind=engine)
-session = Session()
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
 def generate_secure_password(length=12):
     lowercase = string.ascii_lowercase
@@ -52,27 +50,27 @@ def generate_secure_password(length=12):
     return ''.join(password)
 
 def encrypt_password(password):
-    key = PBKDF2(SECRET_KEY, SALT, dkLen=32)
+    key = PBKDF2(app.config['SECRET_KEY'].encode(), base64.b64decode(os.getenv('SALT')), dkLen=32)
     cipher = AES.new(key, AES.MODE_GCM)
     nonce = cipher.nonce
     ciphertext, tag = cipher.encrypt_and_digest(password.encode('utf-8'))
     return base64.b64encode(nonce + tag + ciphertext).decode('utf-8')
 
 def decrypt_password(encrypted_password):
-    key = PBKDF2(SECRET_KEY, SALT, dkLen=32)
+    key = PBKDF2(app.config['SECRET_KEY'].encode(), base64.b64decode(os.getenv('SALT')), dkLen=32)
     encrypted_data = base64.b64decode(encrypted_password)
     nonce, tag, ciphertext = encrypted_data[:16], encrypted_data[16:32], encrypted_data[32:]
     cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
     return cipher.decrypt_and_verify(ciphertext, tag).decode('utf-8')
 
-def save_password(website, username, password):
+def save_password(website, username, password, user_id):
     encrypted_password = encrypt_password(password)
-    new_password = Password(website=website, username=username, password=encrypted_password)
-    session.add(new_password)
-    session.commit()
+    new_password = Password(website=website, username=username, password=encrypted_password, user_id=user_id)
+    db.session.add(new_password)
+    db.session.commit()
 
-def get_saved_passwords():
-    passwords = session.query(Password).all()
+def get_saved_passwords(user_id):
+    passwords = Password.query.filter_by(user_id=user_id).all()
     decrypted_passwords = []
     for p in passwords:
         try:
@@ -84,6 +82,7 @@ def get_saved_passwords():
     return decrypted_passwords
 
 @app.route('/', methods=['GET', 'POST'])
+@login_required
 def index():
     password = ''
     if request.method == 'POST':
@@ -92,7 +91,7 @@ def index():
         username = request.form.get('username')
         if website and username:
             password = generate_secure_password(length)
-            save_password(website, username, password)
+            save_password(website, username, password, current_user.id)
             return redirect(url_for('index', password=password))
         else:
             print("Missing website or username")
@@ -100,9 +99,42 @@ def index():
     return render_template('index.html', password=password)
 
 @app.route('/saved_passwords')
+@login_required
 def saved_passwords():
-    passwords = get_saved_passwords()
+    passwords = get_saved_passwords(current_user.id)
     return render_template('saved_passwords.html', passwords=passwords)
 
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    form = RegistrationForm()
+    if form.validate_on_submit():
+        hashed_password = bcrypt.generate_password_hash(form.password.data).decode('utf-8')
+        user = User(username=form.username.data, password=hashed_password)
+        db.session.add(user)
+        db.session.commit()
+        flash('Your account has been created! You can now log in', 'success')
+        return redirect(url_for('login'))
+    return render_template('register.html', form=form)
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    form = LoginForm()
+    if form.validate_on_submit():
+        user = User.query.filter_by(username=form.username.data).first()
+        if user and bcrypt.check_password_hash(user.password, form.password.data):
+            login_user(user, remember=form.remember.data)
+            return redirect(url_for('index'))
+        else:
+            flash('Login Unsuccessful. Please check username and password', 'danger')
+    return render_template('login.html', form=form)
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('login'))
+
 if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
     app.run(debug=True)

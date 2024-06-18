@@ -1,66 +1,52 @@
-<!DOCTYPE html>
-<html lang="en">
-	<head>
-		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>Secure Password Generator</title>
-		<link
-			href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css"
-			rel="stylesheet"
-		/>
-	</head>
-	<body>
-		<div class="container mt-5">
-			<h1 class="text-center">Secure Password Generator</h1>
-			<form method="POST" class="mt-4">
-				<div class="form-group">
-					<label for="website">Website</label>
-					<input
-						type="text"
-						class="form-control"
-						id="website"
-						name="website"
-						required
-					/>
-				</div>
-				<div class="form-group">
-					<label for="username">Username</label>
-					<input
-						type="text"
-						class="form-control"
-						id="username"
-						name="username"
-						required
-					/>
-				</div>
-				<div class="form-group">
-					<label for="length">Password Length</label>
-					<input
-						type="number"
-						class="form-control"
-						id="length"
-						name="length"
-						value="12"
-						min="4"
-						max="64"
-						required
-					/>
-				</div>
-				<button type="submit" class="btn btn-primary">
-					Generate and Save Password
-				</button>
-			</form>
-			{% if password %}
-			<div class="alert alert-success mt-4" role="alert">
-				Your generated password is: <strong>{{ password }}</strong>
-			</div>
-			{% endif %}
-			<a href="/saved_passwords" class="btn btn-secondary mt-3"
-				>View Saved Passwords</a
-			>
+<!-- index.html -->
+{% extends "base.html" %} {% block content %}
+<div class="container mt-5">
+	<h1 class="text-center">Secure Password Generator</h1>
+	<form method="POST" class="mt-4">
+		<div class="form-group">
+			<label for="website">Website</label>
+			<input
+				type="text"
+				class="form-control"
+				id="website"
+				name="website"
+				required
+			/>
 		</div>
-		<script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
-		<script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
-		<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
-	</body>
-</html>
+		<div class="form-group">
+			<label for="username">Username</label>
+			<input
+				type="text"
+				class="form-control"
+				id="username"
+				name="username"
+				required
+			/>
+		</div>
+		<div class="form-group">
+			<label for="length">Password Length</label>
+			<input
+				type="number"
+				class="form-control"
+				id="length"
+				name="length"
+				value="12"
+				min="4"
+				max="64"
+				required
+			/>
+		</div>
+		<button type="submit" class="btn btn-primary">
+			Generate and Save Password
+		</button>
+	</form>
+	{% if password %}
+	<div class="alert alert-success mt-4" role="alert">
+		Your generated password is: <strong>{{ password }}</strong>
+	</div>
+	{% endif %}
+	<a href="{{ url_for('saved_passwords') }}" class="btn btn-secondary mt-3"
+		>View Saved Passwords</a
+	>
+</div>
+{% endblock %}
