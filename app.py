@@ -1,23 +1,37 @@
 from flask import Flask, render_template, request, redirect, url_for
 import secrets
 import string
-import sqlite3
-from contextlib import closing
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from Crypto.Cipher import AES
+from Crypto.Protocol.KDF import PBKDF2
+import base64
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
-DATABASE = 'passwords.db'
 
+DATABASE_URL = 'sqlite:///passwords_encrypted.db'
+SECRET_KEY = os.getenv('SECRET_KEY').encode()  # Load and encode the secret key
+SALT = base64.b64decode(os.getenv('SALT'))  # Load and decode the salt
 
-def connect_db():
-    return sqlite3.connect(DATABASE)
+engine = create_engine(DATABASE_URL)
+Base = declarative_base()
 
+class Password(Base):
+    __tablename__ = 'passwords'
+    id = Column(Integer, primary_key=True)
+    website = Column(String, nullable=False)
+    username = Column(String, nullable=False)
+    password = Column(String, nullable=False)
 
-def init_db():
-    with closing(connect_db()) as db:
-        with open('schema.sql', mode='r') as f:
-            db.cursor().executescript(f.read())
-        db.commit()
-
+Base.metadata.create_all(engine)
+Session = sessionmaker(bind=engine)
+session = Session()
 
 def generate_secure_password(length=12):
     lowercase = string.ascii_lowercase
@@ -37,25 +51,37 @@ def generate_secure_password(length=12):
     secrets.SystemRandom().shuffle(password)
     return ''.join(password)
 
+def encrypt_password(password):
+    key = PBKDF2(SECRET_KEY, SALT, dkLen=32)
+    cipher = AES.new(key, AES.MODE_GCM)
+    nonce = cipher.nonce
+    ciphertext, tag = cipher.encrypt_and_digest(password.encode('utf-8'))
+    return base64.b64encode(nonce + tag + ciphertext).decode('utf-8')
+
+def decrypt_password(encrypted_password):
+    key = PBKDF2(SECRET_KEY, SALT, dkLen=32)
+    encrypted_data = base64.b64decode(encrypted_password)
+    nonce, tag, ciphertext = encrypted_data[:16], encrypted_data[16:32], encrypted_data[32:]
+    cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+    return cipher.decrypt_and_verify(ciphertext, tag).decode('utf-8')
 
 def save_password(website, username, password):
-    try:
-        with connect_db() as db:
-            db.execute('INSERT INTO passwords (website, username, password) VALUES (?, ?, ?)',
-                       (website, username, password))
-            db.commit()
-    except sqlite3.IntegrityError as e:
-        print(f"IntegrityError: {e}")
-    except Exception as e:
-        print(f"Error: {e}")
-
+    encrypted_password = encrypt_password(password)
+    new_password = Password(website=website, username=username, password=encrypted_password)
+    session.add(new_password)
+    session.commit()
 
 def get_saved_passwords():
-    with connect_db() as db:
-        cur = db.execute('SELECT website, username, password FROM passwords')
-        passwords = cur.fetchall()
-    return passwords
-
+    passwords = session.query(Password).all()
+    decrypted_passwords = []
+    for p in passwords:
+        try:
+            decrypted_password = decrypt_password(p.password)
+            decrypted_passwords.append((p.website, p.username, decrypted_password))
+        except ValueError as e:
+            print(f"Error decrypting password for {p.website}: {e}")
+            decrypted_passwords.append((p.website, p.username, "Decryption Failed"))
+    return decrypted_passwords
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -64,26 +90,19 @@ def index():
         length = int(request.form.get('length', 12))
         website = request.form.get('website')
         username = request.form.get('username')
-
-        print(f"Website: {website}")
-        print(f"Username: {username}")
-        print(f"Length: {length}")
-
         if website and username:
             password = generate_secure_password(length)
             save_password(website, username, password)
+            return redirect(url_for('index', password=password))
         else:
             print("Missing website or username")
-
+    password = request.args.get('password', '')
     return render_template('index.html', password=password)
-
 
 @app.route('/saved_passwords')
 def saved_passwords():
     passwords = get_saved_passwords()
     return render_template('saved_passwords.html', passwords=passwords)
 
-
 if __name__ == '__main__':
-    init_db()
     app.run(debug=True)
