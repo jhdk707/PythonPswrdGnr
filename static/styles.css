@@ -1,0 +1,11 @@
+/* Custom styles for better mobile responsiveness */
+
+.table-responsive {
+	margin-top: 20px;
+}
+
+@media (max-width: 768px) {
+	.navbar-nav {
+		text-align: center;
+	}
+}

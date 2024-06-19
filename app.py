@@ -13,7 +13,8 @@ from Crypto.Protocol.KDF import PBKDF2
 import base64
 import os
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timezone
+import pytz 
 
 # Load environment variables from .env file
 load_dotenv()
@@ -69,22 +70,22 @@ def decrypt_password(encrypted_password):
 
 def save_password(website, username, password, user_id):
     encrypted_password = encrypt_password(password)
-    new_password = Password(website=website, username=username, password=encrypted_password, user_id=user_id)
+    local_time = datetime.now()
+    new_password = Password(website=website, username=username, password=encrypted_password, user_id=user_id, date_created=local_time)
     db.session.add(new_password)
     db.session.commit()
 
 def get_saved_passwords(user_id):
     passwords = Password.query.filter_by(user_id=user_id).all()
-    decrypted_passwords = []
     for p in passwords:
         try:
-            decrypted_password = decrypt_password(p.password)
-            formatted_date = p.date_created.strftime('%Y-%m-%d %H:%M:%S')
-            decrypted_passwords.append((p.website, p.username, decrypted_password, formatted_date, p.id))
+            p.password = decrypt_password(p.password)
+            p.date_created = p.date_created.strftime('%Y-%m-%d %H:%M:%S')  # Update date_created without milliseconds
         except ValueError as e:
             print(f"Error decrypting password for {p.website}: {e}")
-            decrypted_passwords.append((p.website, p.username, "Decryption Failed", p.date_created.strftime('%Y-%m-%d %H:%M:%S'), p.id))
-    return decrypted_passwords
+            p.password = "Decryption Failed"
+    return passwords
+
 
 
 
@@ -147,7 +148,7 @@ def update_password(password_id):
     original_length = len(decrypt_password(password.password))
     new_password = generate_secure_password(original_length)
     password.password = encrypt_password(new_password)
-    password.date_created = datetime.utcnow()  # Update the date_created to the current datetime
+    password.date_created = datetime.now()  # Update the date_created to the current datetime
     db.session.commit()
     flash('Password updated successfully.', 'success')
     return redirect(url_for('saved_passwords'))
