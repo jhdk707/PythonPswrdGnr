@@ -5,13 +5,15 @@ import string
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_bcrypt import Bcrypt
+from flask_migrate import Migrate  
 from forms import RegistrationForm, LoginForm
-from models import db, User, Password  # Import models and db from models.py
+from models import db, User, Password 
 from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
 import base64
 import os
 from dotenv import load_dotenv
+from datetime import datetime
 
 # Load environment variables from .env file
 load_dotenv()
@@ -26,10 +28,11 @@ db.init_app(app)
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
+migrate = Migrate(app, db)  # Initialize Flask-Migrate
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
 
 def generate_secure_password(length=12):
     lowercase = string.ascii_lowercase
@@ -48,6 +51,7 @@ def generate_secure_password(length=12):
     password += [secrets.choice(all_characters) for _ in range(length - 4)]
     secrets.SystemRandom().shuffle(password)
     return ''.join(password)
+
 
 def encrypt_password(password):
     key = PBKDF2(app.config['SECRET_KEY'].encode(), base64.b64decode(os.getenv('SALT')), dkLen=32)
@@ -75,11 +79,15 @@ def get_saved_passwords(user_id):
     for p in passwords:
         try:
             decrypted_password = decrypt_password(p.password)
-            decrypted_passwords.append((p.website, p.username, decrypted_password))
+            formatted_date = p.date_created.strftime('%Y-%m-%d %H:%M:%S')
+            decrypted_passwords.append((p.website, p.username, decrypted_password, formatted_date, p.id))
         except ValueError as e:
             print(f"Error decrypting password for {p.website}: {e}")
-            decrypted_passwords.append((p.website, p.username, "Decryption Failed"))
+            decrypted_passwords.append((p.website, p.username, "Decryption Failed", p.date_created.strftime('%Y-%m-%d %H:%M:%S'), p.id))
     return decrypted_passwords
+
+
+
 
 @app.route('/', methods=['GET', 'POST'])
 @login_required
@@ -104,6 +112,7 @@ def saved_passwords():
     passwords = get_saved_passwords(current_user.id)
     return render_template('saved_passwords.html', passwords=passwords)
 
+
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     form = RegistrationForm()
@@ -115,6 +124,37 @@ def register():
         flash('Your account has been created! You can now log in', 'success')
         return redirect(url_for('login'))
     return render_template('register.html', form=form)
+
+@app.route('/delete_password/<int:password_id>', methods=['POST'])
+@login_required
+def delete_password(password_id):
+    password = Password.query.get_or_404(password_id)
+    if password.user_id != current_user.id:
+        flash('You do not have permission to delete this password.', 'danger')
+        return redirect(url_for('saved_passwords'))
+    db.session.delete(password)
+    db.session.commit()
+    flash('Password deleted successfully.', 'success')
+    return redirect(url_for('saved_passwords'))
+
+@app.route('/update_password/<int:password_id>', methods=['POST'])
+@login_required
+def update_password(password_id):
+    password = Password.query.get_or_404(password_id)
+    if password.user_id != current_user.id:
+        flash('You do not have permission to update this password.', 'danger')
+        return redirect(url_for('saved_passwords'))
+    original_length = len(decrypt_password(password.password))
+    new_password = generate_secure_password(original_length)
+    password.password = encrypt_password(new_password)
+    password.date_created = datetime.utcnow()  # Update the date_created to the current datetime
+    db.session.commit()
+    flash('Password updated successfully.', 'success')
+    return redirect(url_for('saved_passwords'))
+
+
+
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
